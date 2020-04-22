@@ -1,0 +1,33 @@
+version: '3'
+
+services:
+
+  rabbitmq:
+    image: 'rabbitmq:3.6-management-alpine'
+    ports:
+      - '5672:5672'
+      - '15672:15672'
+
+  server:
+    build: server
+    volumes:
+      - ./server:/app
+    ports:
+      - 5000:5000
+    depends_on:
+      - rabbitmq
+    restart: always
+
+  slave:
+    build: slave
+    volumes:
+      - ./slave:/app
+    environment:
+      - PYTHONUNBUFFERED=1
+
+  master:
+    build: master
+    volumes:
+      - ./master:/app
+    environment:
+      - PYTHONUNBUFFERED=1
