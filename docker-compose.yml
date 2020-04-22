@@ -24,6 +24,7 @@ services:
       - ./slave:/app
     environment:
       - PYTHONUNBUFFERED=1
+    restart: always
 
   master:
     build: master
@@ -31,3 +32,4 @@ services:
       - ./master:/app
     environment:
       - PYTHONUNBUFFERED=1
+    restart: always
