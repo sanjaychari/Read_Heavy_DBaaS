@@ -6,7 +6,7 @@ import sqlite3
 conn = sqlite3.connect('database.db')
 db = conn.cursor()
 
-sleepTime = 20
+sleepTime = 40
 print(' [*] Sleeping for ', sleepTime, ' seconds.')
 time.sleep(sleepTime)
 

@@ -6,23 +6,126 @@ from flask import redirect
 import json
 from datetime import datetime
 import pika
-
-class Read_Object:
-	def __init__(self,query,corrid):
-		self.query = query
-		self.corrid = corrid
-		self.response = None
+import uuid
+import docker
+import time
+import threading
 
 app = Flask(__name__)
+client = docker.from_env()
+number_of_reads = 0
+
+sleepTime = 20
+print(' [*] Sleeping for ', sleepTime, ' seconds.')
+time.sleep(sleepTime)
+
 connection = pika.BlockingConnection(pika.ConnectionParameters(host='rabbitmq', heartbeat=600))
 write_channel = connection.channel()
 write_channel.queue_declare(queue='WRITEQ', durable=True)
-read_channel = connection.channel()
-read_channel.queue_declare(queue='READQ', durable=True)
-response_channel = connection.channel()
-response_channel.queue_declare(queue='RESPONSEQ', durable=True)
-read_request = {}
-response_obj = []
+correl_id = 0
+
+class Read_Object:
+	def __init__(self):
+		global correl_id
+		self.corr_id = str(correl_id)
+		correl_id += 1
+
+		self.connection = pika.BlockingConnection(pika.ConnectionParameters(host='rabbitmq', heartbeat=600))
+
+		self.channel = self.connection.channel()
+
+		result = self.channel.queue_declare(queue='READQ', durable=True)
+		self.callback_queue = 'RESPONSEQ'
+
+		self.channel.basic_consume(
+			queue=self.callback_queue,
+			on_message_callback=self.on_response)
+		#self.start_consuming()
+
+	def on_response(self, ch, method, props, body):
+		#print(self.corr_id, props.correlation_id)
+		if self.corr_id == props.correlation_id:
+			self.response = json.loads(body)
+			ch.basic_ack(delivery_tag=method.delivery_tag)
+			self.connection.close()
+
+	def call(self, query, columns):
+		self.response = None
+		self.channel.basic_publish(
+			exchange='',
+			routing_key='READQ',
+			properties=pika.BasicProperties(
+				reply_to=self.callback_queue,
+				correlation_id=self.corr_id,
+			),
+			body=query)
+		while self.response is None:
+			self.connection.process_data_events()
+			#pass
+		dic = {}
+		if(self.response):
+			if(len(self.response) == 1):
+				for tu in self.response:
+					if(len(columns) == len(tu)):
+						for i in range(len(tu)):
+							dic[columns[i]] = tu[i]
+					else:
+						dic[columns[0]] = tu[0]
+				return jsonify(dic)
+			else:
+				li = []
+				for tu in self.response:
+					dic = {}
+					if(len(columns) == len(tu)):
+						for i in range(len(tu)):
+							dic[columns[i]] = tu[i]
+					else:
+						dic[columns[0]] = tu[0]
+					li.append(dic)
+				return jsonify(li)
+		else:
+			return jsonify({})
+
+def deploy_slaves():
+	global number_of_reads
+	curr_num_containers = 0
+	for container in client.containers.list():
+		print(container.image,type(container.image))
+		if(str(container.image) == "<Image: 'test_slave:latest'>"):
+			curr_num_containers += 1
+	print("Number of slaves : "+str(curr_num_containers), flush=True)
+	print("Number of reads : "+str(number_of_reads))
+	if(curr_num_containers > ((number_of_reads-1)//20)+1):
+		for container in client.containers.list():
+			if(str(container.image) == "<Image: 'test_slave:latest'>" and curr_num_containers>((number_of_reads-1)//20)+1 and not(curr_num_containers==1)):
+				print("Stopping Container")
+				container.kill()
+				curr_num_containers -= 1
+			elif(curr_num_containers==((number_of_reads-1)//20)+1):
+				break
+	elif(curr_num_containers < ((number_of_reads-1)//20)+1):
+		for i in range(curr_num_containers,((number_of_reads-1)//20)+1):
+			print("Creating New Slave")
+			client.containers.run("test_slave:latest")
+			for container in client.containers.list():
+				print(container.image,type(container.image))
+	number_of_reads = 0
+
+'''def set_interval(func, sec):
+    def func_wrapper():
+        set_interval(func, sec)
+        func()
+    t = threading.Timer(sec, func_wrapper)
+    t.start()
+    return t'''
+
+def set_interval(func, sec):
+    def func_wrapper():
+        set_interval(func, sec)
+        func()
+    t = threading.Timer(sec, func_wrapper)
+    t.start()
+    return t
 
 def isnumeric(string):
 	try:
@@ -46,25 +149,13 @@ def validate_date(datestr):
 	except:
 		return False
 
-#connection.close()
-req_no = 0
-
-def check_response_queue(ch, method, properties, body):
-	#print(" [x] Received %s" % body)
-	global read_request
-	global response_obj
-	content = json.loads(body)
-	read_request = json.loads(read_request)
-	if(read_request['corr_id'] == content['corr_id']):
-		response_obj = content['response']
-		ch.basic_ack(delivery_tag=method.delivery_tag)
-		response_channel.stop_consuming()
-
 @app.route('/api/v1/db/read', methods=['POST'])
 def read_data():
-	global req_no
-	global read_request
-	global response_obj
+	if(correl_id == 0):
+		set_interval(deploy_slaves, 120)
+	global number_of_reads
+	number_of_reads += 1
+	print(number_of_reads)
 	req_data = request.get_json()
 
 	tabname = req_data['table']
@@ -103,45 +194,12 @@ def read_data():
 	if(delete == "False"):
 		if(not(where_string=="None")):
 			sql = "SELECT "+column_string+" FROM "+tabname+" WHERE "+where_string
-			read_request = json.dumps({"corr_id" : req_no, "query" : sql})
-			req_no += 1
 		else:
 			sql = "SELECT "+column_string+" FROM "+tabname
-			read_request = json.dumps({"corr_id" : req_no, "query" : sql})
-			req_no += 1
-		read_channel.basic_publish(
-			exchange='',
-			routing_key='READQ',
-			body=read_request,
-			properties=pika.BasicProperties(
-				delivery_mode=2,  # make message persistent
-			))
-		response_channel.basic_qos(prefetch_count=1)
-		response_channel.basic_consume(queue='RESPONSEQ', on_message_callback=check_response_queue)
-		response_channel.start_consuming()
-		dic = {}
-		if(response_obj):
-			if(len(response_obj) == 1):
-				for tu in response_obj:
-					if(len(columns) == len(tu)):
-						for i in range(len(tu)):
-							dic[columns[i]] = tu[i]
-					else:
-						dic[columns[0]] = tu[0]
-				return jsonify(dic), 200
-			else:
-				li = []
-				for tu in response_obj:
-					dic = {}
-					if(len(columns) == len(tu)):
-						for i in range(len(tu)):
-							dic[columns[i]] = tu[i]
-					else:
-						dic[columns[0]] = tu[0]
-					li.append(dic)
-				return jsonify(li), 200
-		else:
-			return jsonify({}), 200
+		read_request = Read_Object()
+		#print(read_request.corr_id)
+		read_response = read_request.call(sql,columns)
+		return read_response, 200
 
 	elif(delete=="True"):
 		if(not(where_string=="None")):
@@ -212,26 +270,6 @@ def write_data():
 				))
 		return jsonify({}),201
 
-'''@app.route('/')
-def index():
-	return 'OK'
-
-
-@app.route('/add-job/<cmd>')
-def add(cmd):
-	connection = pika.BlockingConnection(pika.ConnectionParameters(host='rabbitmq'))
-	channel = connection.channel()
-	channel.queue_declare(queue='task_queue', durable=True)
-	channel.basic_publish(
-		exchange='',
-		routing_key='task_queue',
-		body=cmd,
-		properties=pika.BasicProperties(
-			delivery_mode=2,  # make message persistent
-		))
-	connection.close()
-	return " [x] Sent: %s" % cmd'''
-
-if __name__ == '__main__':
-	app.run(debug=True, host='0.0.0.0')
-
+#set_interval(deploy_slaves, 40)
+app.run(debug=True, host='0.0.0.0', port=80)
+#t.join()

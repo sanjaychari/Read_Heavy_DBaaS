@@ -11,7 +11,7 @@ class Response_Object:
 		self.response = response
 		self.corr_id = corr_id
 
-sleepTime = 20
+sleepTime = 40
 print(' [*] Sleeping for ', sleepTime, ' seconds.')
 time.sleep(sleepTime)
 
@@ -24,26 +24,24 @@ def callback_read(ch, method, properties, body):
 	conn = sqlite3.connect('database.db')
 	db = conn.cursor()
 	print(" [x] Received %s" % body)
-	content = json.loads(body)
-	cmd = content['query']
-	req_no = content['corr_id']
+	#content = json.loads(body)
+	#cmd = content['query']
+	#req_no = content['corr_id']
+	cmd = body.decode()
 	result = db.execute(cmd)
 	response = result.fetchall()
-	print(response)
-	responseobj = {"corr_id" : req_no, "response" : response}
-	connection = pika.BlockingConnection(pika.ConnectionParameters(host='rabbitmq'))
-	response_channel = connection.channel()
-	response_channel.queue_declare(queue='RESPONSEQ', durable=True)
-	response_channel.basic_publish(
-		exchange='',
-		routing_key='RESPONSEQ',
-		body=json.dumps(responseobj),
-		properties=pika.BasicProperties(
-			delivery_mode=2,  # make message persistent
-		))
+	print(response,properties.correlation_id)
+	#responseobj = {"corr_id" : req_no, "response" : response}
+	#connection = pika.BlockingConnection(pika.ConnectionParameters(host='rabbitmq'))
+	#response_channel = connection.channel()
+	#response_channel.queue_declare(queue='RESPONSEQ', durable=True)
+	ch.basic_publish(exchange='',
+                     routing_key=properties.reply_to,
+                     properties=pika.BasicProperties(correlation_id = properties.correlation_id),
+                     body=json.dumps(response))
 	ch.basic_ack(delivery_tag=method.delivery_tag)
 	conn.close()
-	connection.close()
+	#connection.close()
 
 
 def callback_sync(ch, method, properties, body):
