@@ -58,7 +58,7 @@ if(str(os.environ['IS_MASTER']) == "False"):
 		ch.basic_ack(delivery_tag=method.delivery_tag)
 
 	def read_consume():
-		connection = pika.BlockingConnection(pika.ConnectionParameters(host='rabbitmq'))
+		connection = pika.BlockingConnection(pika.ConnectionParameters(host='rabbitmq',heartbeat=600))
 		read_channel = connection.channel()
 		read_channel.queue_declare(queue='READQ', durable=True)
 		read_channel.basic_qos(prefetch_count=1)
@@ -68,9 +68,12 @@ if(str(os.environ['IS_MASTER']) == "False"):
 	def sync_consume():
 		connection = pika.BlockingConnection(pika.ConnectionParameters(host='rabbitmq',heartbeat=600))
 		sync_channel = connection.channel()
-		sync_channel.queue_declare(queue='SYNCQ', durable=True)
-		sync_channel.basic_qos(prefetch_count=1)
-		sync_channel.basic_consume(queue='SYNCQ', on_message_callback=callback_sync)
+		sync_channel.exchange_declare(exchange='SYNCEXCHANGE', exchange_type='fanout')
+		result = sync_channel.queue_declare(queue='', durable=True)
+		queue_name = result.method.queue
+		sync_channel.queue_bind(exchange='SYNCEXCHANGE', queue=queue_name)
+		#sync_channel.basic_qos(prefetch_count=1)
+		sync_channel.basic_consume(queue=queue_name, on_message_callback=callback_sync)
 		sync_channel.start_consuming()
 
 	def manager():
@@ -102,8 +105,7 @@ else:
 	write_channel = connection.channel()
 	write_channel.queue_declare(queue='WRITEQ', durable=True)
 	sync_channel = connection.channel()
-	sync_channel.queue_declare(queue='SYNCQ', durable=True)
-
+	sync_channel.exchange_declare(exchange='SYNCEXCHANGE', exchange_type='fanout')
 
 	print(' [*] Waiting for messages.')
 
@@ -115,14 +117,14 @@ else:
 		conn.commit()
 		#conn.close()
 		sync_channel.basic_publish(
-			exchange='',
-			routing_key='SYNCQ',
+			exchange='SYNCEXCHANGE',
+			routing_key='',
 			body= content,
 			properties=pika.BasicProperties(
 				delivery_mode=2,  # make message persistent
 			))
 		ch.basic_ack(delivery_tag=method.delivery_tag)
 
-	write_channel.basic_qos(prefetch_count=1)
+	#write_channel.basic_qos(prefetch_count=1)
 	write_channel.basic_consume(queue='WRITEQ', on_message_callback=callback_write)
 	write_channel.start_consuming()

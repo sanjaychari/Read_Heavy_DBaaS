@@ -10,6 +10,8 @@ import uuid
 import docker
 import time
 import threading
+import shlex
+import subprocess
 
 app = Flask(__name__)
 client = docker.from_env()
@@ -286,6 +288,48 @@ def write_data():
 				))
 		return jsonify({}),201
 
-#set_interval(deploy_slaves, 40)
-app.run(debug=True, host='0.0.0.0', port=80)
-#t.join()
+@app.route('/api/v1/crash/master', methods=['POST'])
+def crash_master():
+	for container in client.containers.list():
+		if str(container.image) == "<Image: 'test_master:latest'>":
+			print("Killing Master")
+			container.kill()
+	return jsonify({}), 200
+
+@app.route('/api/v1/crash/slave', methods=['POST'])
+def crash_slave():
+	max_pid = 0
+	max_container = None
+	for container in client.containers.list():
+		if str(container.image) == "<Image: 'test_slave:latest'>":
+			command = shlex.split("docker inspect -f \'{{ .State.Pid }}\' "+str(container.id))
+			try:
+			    output = subprocess.check_output(command, stderr=subprocess.STDOUT).decode()
+			    success = True 
+			except subprocess.CalledProcessError as e:
+			    output = e.output.decode()
+			    success = False
+			if int(output) > max_pid:
+				max_pid = int(output)
+				max_container = container
+	print("Killing Slave")
+	max_container.kill()
+	return jsonify({}), 200
+
+@app.route('/api/v1/worker/list', methods=['GET'])
+def worker_list():
+	workers_list = []
+	for container in client.containers.list():
+		if(str(container.image) == "<Image: 'test_slave:latest'>" or str(container.image) == "<Image: 'test_master:latest'>"):
+			command = shlex.split("docker inspect -f \'{{ .State.Pid }}\' "+str(container.id))
+			try:
+			    output = subprocess.check_output(command, stderr=subprocess.STDOUT).decode()
+			    success = True 
+			except subprocess.CalledProcessError as e:
+			    output = e.output.decode()
+			    success = False
+			workers_list.append(int(output))
+	return jsonify(sorted(workers_list)), 200
+
+if __name__=='__main__':
+	app.run(debug=True, host='0.0.0.0', port=80)
