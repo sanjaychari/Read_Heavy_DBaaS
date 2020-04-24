@@ -18,8 +18,6 @@ services:
       - PYTHONUNBUFFERED=1
     ports:
       - 80:80
-    depends_on:
-      - rabbitmq
 
   slave:
     build: slave

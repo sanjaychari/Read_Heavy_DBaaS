@@ -86,6 +86,9 @@ class Read_Object:
 		else:
 			return jsonify({})
 
+def create_new_slave():
+	client.containers.run("test_slave:latest", network = "test_default", environment =["IS_MASTER=False","IS_FIRST_SLAVE=False"])
+
 def deploy_slaves():
 	global number_of_reads
 	curr_num_containers = 0
@@ -97,19 +100,32 @@ def deploy_slaves():
 	print("Number of reads : "+str(number_of_reads))
 	if(curr_num_containers > ((number_of_reads-1)//20)+1):
 		for container in client.containers.list():
-			if(str(container.image) == "<Image: 'test_slave:latest'>" and curr_num_containers>((number_of_reads-1)//20)+1 and not(curr_num_containers==1)):
+			if((str(container.image) == "<Image: 'test_slave:latest'>") and curr_num_containers>((number_of_reads-1)//20)+1 and not(curr_num_containers==1)):
 				print("Stopping Container")
 				container.kill()
 				curr_num_containers -= 1
 			elif(curr_num_containers==((number_of_reads-1)//20)+1):
 				break
+		number_of_reads = 0
 	elif(curr_num_containers < ((number_of_reads-1)//20)+1):
-		for i in range(curr_num_containers,((number_of_reads-1)//20)+1):
+		no_of_reads = number_of_reads
+		number_of_reads = 0
+		for i in range(curr_num_containers,((no_of_reads-1)//20)+1):
 			print("Creating New Slave")
-			client.containers.run("test_slave:latest")
-			for container in client.containers.list():
-				print(container.image,type(container.image))
-	number_of_reads = 0
+			t = threading.Thread(target = create_new_slave)
+			t.start()
+			#print(container.logs)
+		for container in client.containers.list():
+			print(container.image,type(container.image))
+		#number_of_reads = 0
+
+'''def set_interval(func, sec):
+    def func_wrapper():
+        set_interval(func, sec)
+        func()
+    t = threading.Timer(sec, func_wrapper)
+    t.start()
+    return t'''
 
 '''def set_interval(func, sec):
     def func_wrapper():

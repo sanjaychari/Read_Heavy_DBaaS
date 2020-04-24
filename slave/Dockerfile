@@ -9,6 +9,8 @@ WORKDIR /app
 
 ENV IS_MASTER=False
 
+ENV IS_FIRST_SLAVE=True
+
 COPY . /app
 
 ENTRYPOINT [ "python3" ]
