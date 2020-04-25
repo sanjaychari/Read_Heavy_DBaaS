@@ -7,6 +7,8 @@ RUN pip3 install pika
 
 WORKDIR /app
 
+ENV IS_MASTER=True
+
 COPY . /app
 
 ENTRYPOINT [ "python3" ]

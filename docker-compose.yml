@@ -7,16 +7,18 @@ services:
     ports:
       - '5672:5672'
       - '15672:15672'
+    restart: always
 
   server:
     build: server
     volumes:
       - ./server:/app
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /usr/bin/docker:/usr/bin/docker
+    environment:
+      - PYTHONUNBUFFERED=1
     ports:
-      - 5000:5000
-    depends_on:
-      - rabbitmq
-    restart: always
+      - 80:80
 
   slave:
     build: slave
@@ -31,3 +33,9 @@ services:
       - ./master:/app
     environment:
       - PYTHONUNBUFFERED=1
+
+  Zookeeper:
+    image: 'zookeeper'
+    ports:
+      - 2181:2181
+    restart: always
