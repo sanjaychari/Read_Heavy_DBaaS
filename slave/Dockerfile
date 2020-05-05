@@ -5,7 +5,15 @@ RUN apt-get update -y && \
 
 RUN pip3 install pika
 
+RUN pip3 install docker
+
 WORKDIR /app
+
+ENV IS_MASTER=False
+
+ENV IS_FIRST_SLAVE=True
+
+ENV SLAVE_NUMBER=0
 
 COPY . /app
 
