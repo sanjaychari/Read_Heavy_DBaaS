@@ -1,12 +1,12 @@
 version: '2'
 services:
-    users:
-        container_name: users
+    rides:
+        container_name: rides
         build: .
-        image: users:latest
+        image: rides:latest
         ports:
             - "80:80"
         volumes:
-            - .:/users
+            - .:/rides
         environment:
             - PORT:80
