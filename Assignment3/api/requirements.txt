@@ -1,0 +1,6 @@
+Flask
+sqlalchemy
+requests
+pandas
+flask_sqlalchemy
+pickle-mixin
