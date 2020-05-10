@@ -20,7 +20,7 @@ client = docker.from_env()
 number_of_reads = 0
 sync_messages = []
 
-sleepTime = 20
+sleepTime = 200
 print(' [*] Sleeping for ', sleepTime, ' seconds.')
 time.sleep(sleepTime)
 
@@ -257,6 +257,7 @@ def deploy_slaves():
 		for container in client.containers.list():
 			print(container.image,type(container.image))
 		#number_of_reads = 0
+	number_of_reads = 0
 	is_scaling = 0
 
 '''def set_interval(func, sec):

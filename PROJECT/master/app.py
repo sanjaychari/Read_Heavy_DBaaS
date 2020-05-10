@@ -18,7 +18,7 @@ def master_consume():
 	try:
 		print(os.environ['IS_FIRST_SLAVE'])
 	except:
-		sleepTime = 40
+		sleepTime = 400
 		print(' [*] Sleeping for ', sleepTime, ' seconds.')
 		time.sleep(sleepTime)
 
@@ -82,7 +82,7 @@ if(str(os.environ['IS_MASTER']) == "False"):
 			self.corr_id = corr_id
 
 	if(str(os.environ['IS_FIRST_SLAVE']) == "True"):
-		sleepTime = 40
+		sleepTime = 400
 		print(' [*] Sleeping for ', sleepTime, ' seconds.')
 		time.sleep(sleepTime)
 

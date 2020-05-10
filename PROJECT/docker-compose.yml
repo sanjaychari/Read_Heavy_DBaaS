@@ -19,6 +19,7 @@ services:
       - PYTHONUNBUFFERED=1
     ports:
       - 80:80
+    restart: always
 
   slave:
     build: slave
@@ -28,6 +29,7 @@ services:
       - /usr/bin/docker:/usr/bin/docker
     environment:
       - PYTHONUNBUFFERED=1
+    restart: always
 
   master:
     build: master
@@ -37,6 +39,7 @@ services:
       - /usr/bin/docker:/usr/bin/docker
     environment:
       - PYTHONUNBUFFERED=1
+    restart: always
 
   Zookeeper:
     image: 'zookeeper'
