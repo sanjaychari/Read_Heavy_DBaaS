@@ -78,19 +78,19 @@ def update_zookeeper():
 		global is_first_time
 		if(is_first_time == 1):
 			for container in client.containers.list():
-				if(str(container.image) == "<Image: 'PROJECT_slave:latest'>" and not(is_master(container))):
+				if(str(container.image) == "<Image: 'project_slave:latest'>" and not(is_master(container))):
 					zk.create("/workers/slaves/"+str(container.name), str(container.id).encode('utf-8'))
-				elif(str(container.image) == "<Image: 'PROJECT_master:latest'>"):
+				elif(str(container.image) == "<Image: 'project_master:latest'>"):
 					zk.create("/workers/master/"+str(container.name), str(container.id).encode('utf-8'))
 			is_first_time = 0
 		elif(is_scaling == 0):
-			slave_names = [str(container.name) for container in client.containers.list() if str(container.image) == "<Image: 'PROJECT_slave:latest'>" and not(is_master(container))]
+			slave_names = [str(container.name) for container in client.containers.list() if str(container.image) == "<Image: 'project_slave:latest'>" and not(is_master(container))]
 			for zk_name in zk.get_children("/workers/slaves"):
 				if zk_name not in slave_names:
 					if(zk.exists("/workers/slaves/"+str(zk_name))):
 						print("ZOOKEEPER OBSERVED THAT SLAVE "+zk_name+" FAILED")
 						zk.delete("/workers/slaves/"+str(zk_name))
-						container = client.containers.run("PROJECT_slave:latest", network = "PROJECT_default", environment =["IS_MASTER=False","IS_FIRST_SLAVE=False"], detach = True)
+						container = client.containers.run("project_slave:latest", network = "project_default", environment =["IS_MASTER=False","IS_FIRST_SLAVE=False"], detach = True)
 						zk.create("/workers/slaves/"+str(container.name), str(container.id).encode('utf-8'))
 						print("ZOOKEEPER CREATED SLAVE "+container.name)
 			master_name = [str(container.name) for container in client.containers.list() if is_master(container)]
@@ -104,7 +104,7 @@ def update_zookeeper():
 						min_pid = 100000
 						min_container = None
 						for container in client.containers.list():
-							if(str(container.image) == "<Image: 'PROJECT_slave:latest'>" and not(is_master(container))):
+							if(str(container.image) == "<Image: 'project_slave:latest'>" and not(is_master(container))):
 								command = shlex.split("docker inspect -f \'{{ .State.Pid }}\' "+str(container.id))
 								try:
 									output = subprocess.check_output(command, stderr=subprocess.STDOUT).decode()
@@ -119,7 +119,7 @@ def update_zookeeper():
 						min_container.rename(min_container.name+"-MASTER")
 						zk.create("/workers/master/"+str(min_container.name)+"-MASTER", str(min_container.id).encode('utf-8'))
 						print("ZOOKEEPER ELECTED NEW MASTER : ",str(min_container.name)+"-MASTER")
-						container = client.containers.run("PROJECT_slave:latest", network = "PROJECT_default", environment =["IS_MASTER=False","IS_FIRST_SLAVE=False"], detach = True)
+						container = client.containers.run("project_slave:latest", network = "project_default", environment =["IS_MASTER=False","IS_FIRST_SLAVE=False"], detach = True)
 						zk.create("/workers/slaves/"+str(container.name), str(container.id).encode('utf-8'))
 						print("ZOOKEEPER CREATED SLAVE "+container.name)
 						mutex = 0
@@ -222,13 +222,13 @@ def deploy_slaves():
 	curr_num_containers = 0
 	for container in client.containers.list():
 		print(container.image,type(container.image))
-		if(str(container.image) == "<Image: 'PROJECT_slave:latest'>" and not(is_master(container))):
+		if(str(container.image) == "<Image: 'project_slave:latest'>" and not(is_master(container))):
 			curr_num_containers += 1
 	print("Number of slaves : "+str(curr_num_containers), flush=True)
 	print("Number of reads : "+str(number_of_reads))
 	if(curr_num_containers > ((number_of_reads-1)//20)+1):
 		for container in client.containers.list():
-			if(str(container.image) == "<Image: 'PROJECT_slave:latest'>" and not(is_master(container)) and curr_num_containers>((number_of_reads-1)//20)+1 and not(curr_num_containers==1)):
+			if(str(container.image) == "<Image: 'project_slave:latest'>" and not(is_master(container)) and curr_num_containers>((number_of_reads-1)//20)+1 and not(curr_num_containers==1)):
 				print("Stopping Container")
 				zk.delete("/workers/slaves/"+str(container.name))
 				container.kill()
@@ -241,7 +241,7 @@ def deploy_slaves():
 		number_of_reads = 0
 		for i in range(curr_num_containers,((no_of_reads-1)//20)+1):
 			print("Creating New Slave")
-			container = client.containers.run("PROJECT_slave:latest", network = "PROJECT_default", environment =["IS_MASTER=False","IS_FIRST_SLAVE=False"], detach = True)
+			container = client.containers.run("project_slave:latest", network = "project_default", environment =["IS_MASTER=False","IS_FIRST_SLAVE=False"], detach = True)
 			zk.create("/workers/slaves/"+str(container.name), str(container.id).encode('utf-8'))
 		for container in client.containers.list():
 			print(container.image,type(container.image))
@@ -438,7 +438,7 @@ def crash_slave():
 	max_pid = 0
 	max_container = None
 	for container in client.containers.list():
-		if(str(container.image) == "<Image: 'PROJECT_slave:latest'>" and not(is_master(container))):
+		if(str(container.image) == "<Image: 'project_slave:latest'>" and not(is_master(container))):
 			command = shlex.split("docker inspect -f \'{{ .State.Pid }}\' "+str(container.id))
 			try:
 			    output = subprocess.check_output(command, stderr=subprocess.STDOUT).decode()
@@ -458,7 +458,7 @@ def crash_slave():
 def worker_list():
 	workers_list = []
 	for container in client.containers.list():
-		if(str(container.image) == "<Image: 'PROJECT_slave:latest'>" or str(container.image) == "<Image: 'PROJECT_master:latest'>"):
+		if(str(container.image) == "<Image: 'project_slave:latest'>" or str(container.image) == "<Image: 'project_master:latest'>"):
 			command = shlex.split("docker inspect -f \'{{ .State.Pid }}\' "+str(container.id))
 			try:
 			    output = subprocess.check_output(command, stderr=subprocess.STDOUT).decode()
