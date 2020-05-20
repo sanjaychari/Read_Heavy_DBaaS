@@ -14,27 +14,34 @@ import shlex
 import subprocess
 from kazoo.client import KazooClient, KazooState
 
-
+#Setting Up Flask App context
 app = Flask(__name__)
+#Setting up Docker client to connect to localhost's docker
 client = docker.from_env()
+
+#Global Variables
 number_of_reads = 0
 sync_messages = []
-
-sleepTime = 200
-print(' [*] Sleeping for ', sleepTime, ' seconds.')
-time.sleep(sleepTime)
-
-connection = pika.BlockingConnection(pika.ConnectionParameters(host='rabbitmq', heartbeat=600))
-write_channel = connection.channel()
-write_channel.queue_declare(queue='WRITEQ', durable=True)
 correl_id = 0
 is_first_write = 1
 is_scaling = 0
 is_first_time = 1
+sleepTime = 20
 
+#Making the app sleep in order to wait for RabbitMQ and Zookeeper to start up
+print(' [*] Sleeping for ', sleepTime, ' seconds.')
+time.sleep(sleepTime)
+
+#Creating a connection to WRITEQ
+connection = pika.BlockingConnection(pika.ConnectionParameters(host='rabbitmq', heartbeat=600))
+write_channel = connection.channel()
+write_channel.queue_declare(queue='WRITEQ', durable=True)
+
+#Setting up Zookeeper client to connect to Zookeeper container
 zk = KazooClient(hosts='Zookeeper:2181')
 zk.start()
 
+#Listening for state of zookeeper connection
 def my_listener(state):
     if state == KazooState.LOST:
         # Register somewhere that the session was lost
@@ -45,30 +52,24 @@ def my_listener(state):
     else:
         # Handle being connected/reconnected to Zookeeper
         print("Zookeeper Connected Sucessfully")
-	
 zk.add_listener(my_listener)
+
+#Deleting existing zookeeper paths and creating new ones
 if(zk.exists("/workers/slaves")):
 	zk.delete("/workers/slaves", recursive=True)
 	zk.delete("/workers/master", recursive=True)
 zk.ensure_path("/workers/slaves")
 zk.ensure_path("/workers/master")
 
+#Function to check if a worker is master or slave
 def is_master(container):
-	'''command = shlex.split("docker exec "+str(container.id)+" bash -c \'echo \"$IS_MASTER\"\'")
-	try:
-		output = subprocess.check_output(command, stderr=subprocess.STDOUT).decode()
-		success = True 
-	except subprocess.CalledProcessError as e:
-		output = e.output.decode()
-		success = False'''
-	#return str(output)
-	#return type(output)
-	#return [output,'True',output=='True']
 	if("MASTER" in container.name or "master" in container.name):
 		return True
 	else:
 		return False
 
+#Manager thread that handles creation and deletion of znodes according to the list of containers 
+#currently running
 def update_zookeeper():
 	print("Entered Update Zookeeper")
 	while(True):
@@ -77,26 +78,21 @@ def update_zookeeper():
 		global is_first_time
 		if(is_first_time == 1):
 			for container in client.containers.list():
-				if(str(container.image) == "<Image: 'test2_slave:latest'>" and not(is_master(container))):
-					#zk.ensure_path("/workers/slaves/"+str(container.name))
+				if(str(container.image) == "<Image: 'PROJECT_slave:latest'>" and not(is_master(container))):
 					zk.create("/workers/slaves/"+str(container.name), str(container.id).encode('utf-8'))
-				elif(str(container.image) == "<Image: 'test2_master:latest'>"):
-					#zk.ensure_path("/workers/master/"+str(container.name))
+				elif(str(container.image) == "<Image: 'PROJECT_master:latest'>"):
 					zk.create("/workers/master/"+str(container.name), str(container.id).encode('utf-8'))
 			is_first_time = 0
 		elif(is_scaling == 0):
-			slave_names = [str(container.name) for container in client.containers.list() if str(container.image) == "<Image: 'test2_slave:latest'>" and not(is_master(container))]
+			slave_names = [str(container.name) for container in client.containers.list() if str(container.image) == "<Image: 'PROJECT_slave:latest'>" and not(is_master(container))]
 			for zk_name in zk.get_children("/workers/slaves"):
 				if zk_name not in slave_names:
 					if(zk.exists("/workers/slaves/"+str(zk_name))):
 						print("ZOOKEEPER OBSERVED THAT SLAVE "+zk_name+" FAILED")
 						zk.delete("/workers/slaves/"+str(zk_name))
-						container = client.containers.run("test2_slave:latest", network = "test2_default", environment =["IS_MASTER=False","IS_FIRST_SLAVE=False"], detach = True)
+						container = client.containers.run("PROJECT_slave:latest", network = "PROJECT_default", environment =["IS_MASTER=False","IS_FIRST_SLAVE=False"], detach = True)
 						zk.create("/workers/slaves/"+str(container.name), str(container.id).encode('utf-8'))
 						print("ZOOKEEPER CREATED SLAVE "+container.name)
-						#zk.ensure_path("/workers/slaves/"+str(zk_name)+"-FAILED")
-						'''if(not(zk.exists("/workers/slaves/"+str(zk_name)+"-FAILED"))):
-							zk.create("/workers/slaves/"+str(zk_name)+"-FAILED", str(data).encode('utf-8'))'''
 			master_name = [str(container.name) for container in client.containers.list() if is_master(container)]
 			mutex = 0
 			for zk_name in zk.get_children("/workers/master"):
@@ -105,13 +101,10 @@ def update_zookeeper():
 						mutex = 1
 						print("ZOOKEEPER OBSERVED THAT MASTER FAILED")
 						zk.delete("/workers/master/"+str(zk_name))
-						#zk.ensure_path("/workers/master/"+str(zk_name)+"-FAILED")
-						'''if(not(zk.exists("/workers/master/"+str(zk_name)+"-FAILED"))):
-							zk.create("/workers/master/"+str(zk_name)+"-FAILED", str(data).encode('utf-8'))'''
 						min_pid = 100000
 						min_container = None
 						for container in client.containers.list():
-							if(str(container.image) == "<Image: 'test2_slave:latest'>" and not(is_master(container))):
+							if(str(container.image) == "<Image: 'PROJECT_slave:latest'>" and not(is_master(container))):
 								command = shlex.split("docker inspect -f \'{{ .State.Pid }}\' "+str(container.id))
 								try:
 									output = subprocess.check_output(command, stderr=subprocess.STDOUT).decode()
@@ -122,23 +115,24 @@ def update_zookeeper():
 								if int(output) < min_pid:
 									min_pid = int(output)
 									min_container = container
-						#subprocess.call("docker exec -i "+str(min_container.id)+" /bin/bash -c \"export IS_MASTER=True\"", shell=True)
-						#print(min_container.exec_run(cmd = "ps", environment = ["IS_MASTER=True"]))
 						zk.delete("/workers/slaves/"+str(min_container.name))
 						min_container.rename(min_container.name+"-MASTER")
 						zk.create("/workers/master/"+str(min_container.name)+"-MASTER", str(min_container.id).encode('utf-8'))
 						print("ZOOKEEPER ELECTED NEW MASTER : ",str(min_container.name)+"-MASTER")
-						container = client.containers.run("test2_slave:latest", network = "test2_default", environment =["IS_MASTER=False","IS_FIRST_SLAVE=False"], detach = True)
+						container = client.containers.run("PROJECT_slave:latest", network = "PROJECT_default", environment =["IS_MASTER=False","IS_FIRST_SLAVE=False"], detach = True)
 						zk.create("/workers/slaves/"+str(container.name), str(container.id).encode('utf-8'))
 						print("ZOOKEEPER CREATED SLAVE "+container.name)
 						mutex = 0
 
+#Function that appends messages consumed from the SYNCQ into a global list. 
+#This global list is maintained for database consistency in new slaves
 def callback_sync(ch, method, properties, body):
 	global sync_messages
 	content = body.decode()
 	sync_messages.append(content)
 	ch.basic_ack(delivery_tag=method.delivery_tag)
 
+#Thread that consumes from the SYNCQ
 def consume_from_syncq():
 	connection = pika.BlockingConnection(pika.ConnectionParameters(host='rabbitmq',heartbeat=600))
 	sync_channel = connection.channel()
@@ -150,14 +144,17 @@ def consume_from_syncq():
 	sync_channel.basic_consume(queue=queue_name, on_message_callback=callback_sync)
 	sync_channel.start_consuming()
 					
+#Built in Kazoo watcher API that is triggered whenever the list of slave znodes changes
 @zk.ChildrenWatch("/workers/slaves")
 def watch_slave(children):
 	print("Zookeeper Slaves : ",children)
 
+#Built in Kazoo watcher API that is triggered whenever the list of master znodes changes
 @zk.ChildrenWatch("/workers/master")
 def watch_master(children):
 	print("Zookeeper Master : ",children)		
 
+#Object that is created when the read API is called
 class Read_Object:
 	def __init__(self):
 		global correl_id
@@ -174,10 +171,8 @@ class Read_Object:
 		self.channel.basic_consume(
 			queue=self.callback_queue,
 			on_message_callback=self.on_response)
-		#self.start_consuming()
 
 	def on_response(self, ch, method, props, body):
-		#print(self.corr_id, props.correlation_id)
 		if self.corr_id == props.correlation_id:
 			self.response = json.loads(body)
 			ch.basic_ack(delivery_tag=method.delivery_tag)
@@ -195,7 +190,6 @@ class Read_Object:
 			body=query)
 		while self.response is None:
 			self.connection.process_data_events()
-			#pass
 		dic = {}
 		if(self.response):
 			if(len(self.response) == 1):
@@ -220,9 +214,7 @@ class Read_Object:
 		else:
 			return jsonify({})
 
-'''def create_new_slave():
-	client.containers.run("test2_slave:latest", network = "test2_default", environment =["IS_MASTER=False","IS_FIRST_SLAVE=False"])'''
-
+#Manager thread for scaling in and scaling out of slave containers
 def deploy_slaves():
 	global number_of_reads
 	global is_scaling
@@ -230,13 +222,13 @@ def deploy_slaves():
 	curr_num_containers = 0
 	for container in client.containers.list():
 		print(container.image,type(container.image))
-		if(str(container.image) == "<Image: 'test2_slave:latest'>" and not(is_master(container))):
+		if(str(container.image) == "<Image: 'PROJECT_slave:latest'>" and not(is_master(container))):
 			curr_num_containers += 1
 	print("Number of slaves : "+str(curr_num_containers), flush=True)
 	print("Number of reads : "+str(number_of_reads))
 	if(curr_num_containers > ((number_of_reads-1)//20)+1):
 		for container in client.containers.list():
-			if(str(container.image) == "<Image: 'test2_slave:latest'>" and not(is_master(container)) and curr_num_containers>((number_of_reads-1)//20)+1 and not(curr_num_containers==1)):
+			if(str(container.image) == "<Image: 'PROJECT_slave:latest'>" and not(is_master(container)) and curr_num_containers>((number_of_reads-1)//20)+1 and not(curr_num_containers==1)):
 				print("Stopping Container")
 				zk.delete("/workers/slaves/"+str(container.name))
 				container.kill()
@@ -249,33 +241,14 @@ def deploy_slaves():
 		number_of_reads = 0
 		for i in range(curr_num_containers,((no_of_reads-1)//20)+1):
 			print("Creating New Slave")
-			'''t = threading.Thread(target = create_new_slave)
-			t.start()'''
-			container = client.containers.run("test2_slave:latest", network = "test2_default", environment =["IS_MASTER=False","IS_FIRST_SLAVE=False"], detach = True)
+			container = client.containers.run("PROJECT_slave:latest", network = "PROJECT_default", environment =["IS_MASTER=False","IS_FIRST_SLAVE=False"], detach = True)
 			zk.create("/workers/slaves/"+str(container.name), str(container.id).encode('utf-8'))
-			#print(container.logs)
 		for container in client.containers.list():
 			print(container.image,type(container.image))
-		#number_of_reads = 0
 	number_of_reads = 0
 	is_scaling = 0
 
-'''def set_interval(func, sec):
-    def func_wrapper():
-        set_interval(func, sec)
-        func()
-    t = threading.Timer(sec, func_wrapper)
-    t.start()
-    return t'''
-
-'''def set_interval(func, sec):
-    def func_wrapper():
-        set_interval(func, sec)
-        func()
-    t = threading.Timer(sec, func_wrapper)
-    t.start()
-    return t'''
-
+#Function that sets a recurring interval to call another function
 def set_interval(func, sec):
     def func_wrapper():
         set_interval(func, sec)
@@ -284,6 +257,7 @@ def set_interval(func, sec):
     t.start()
     return t
 
+#Check if string can be converted to a number
 def isnumeric(string):
 	try:
 		num = int(string)
@@ -291,6 +265,7 @@ def isnumeric(string):
 	except:
 		return False
 
+#Check if string is SHA1 form
 def check_sha1(string):
 	if(len(string)!=40):
 		return False
@@ -299,6 +274,7 @@ def check_sha1(string):
 			return False
 	return True
 
+#Check if string is in valid Datetime format
 def validate_date(datestr):
 	try:
 		now = datetime.strptime(datestr,'%d-%m-%Y:%S-%M-%H')
@@ -306,6 +282,7 @@ def validate_date(datestr):
 	except:
 		return False
 
+#Read DB API
 @app.route('/api/v1/db/read', methods=['POST'])
 def read_data():
 	if(correl_id == 0):
@@ -356,7 +333,6 @@ def read_data():
 		else:
 			sql = "SELECT "+column_string+" FROM "+tabname
 		read_request = Read_Object()
-		#print(read_request.corr_id)
 		read_response = read_request.call(sql,columns)
 		return read_response, 200
 
@@ -382,6 +358,7 @@ def read_data():
 				))
 			return jsonify({}), 200
 
+#Write DB API
 @app.route('/api/v1/db/write', methods=['POST'])
 def write_data():
 	global is_first_write
@@ -438,11 +415,10 @@ def write_data():
 				))
 		return jsonify({}),201
 
+#Crashes the master container
 @app.route('/api/v1/crash/master', methods=['POST'])
 def crash_master():
 	for container in client.containers.list():
-		#if(str(container.image) == "<Image: 'test2_master:latest'>"):
-			#return str(is_master(container)), 200
 		if(is_master(container)):
 			command = shlex.split("docker inspect -f \'{{ .State.Pid }}\' "+str(container.id))
 			try:
@@ -456,12 +432,13 @@ def crash_master():
 			container.kill()
 	return jsonify([master_pid]), 200
 
+#Crashes the slave container with highest pid
 @app.route('/api/v1/crash/slave', methods=['POST'])
 def crash_slave():
 	max_pid = 0
 	max_container = None
 	for container in client.containers.list():
-		if(str(container.image) == "<Image: 'test2_slave:latest'>" and not(is_master(container))):
+		if(str(container.image) == "<Image: 'PROJECT_slave:latest'>" and not(is_master(container))):
 			command = shlex.split("docker inspect -f \'{{ .State.Pid }}\' "+str(container.id))
 			try:
 			    output = subprocess.check_output(command, stderr=subprocess.STDOUT).decode()
@@ -476,11 +453,12 @@ def crash_slave():
 	max_container.kill()
 	return jsonify([max_pid]), 200
 
+#Displays list of workers
 @app.route('/api/v1/worker/list', methods=['GET'])
 def worker_list():
 	workers_list = []
 	for container in client.containers.list():
-		if(str(container.image) == "<Image: 'test2_slave:latest'>" or str(container.image) == "<Image: 'test2_master:latest'>"):
+		if(str(container.image) == "<Image: 'PROJECT_slave:latest'>" or str(container.image) == "<Image: 'PROJECT_master:latest'>"):
 			command = shlex.split("docker inspect -f \'{{ .State.Pid }}\' "+str(container.id))
 			try:
 			    output = subprocess.check_output(command, stderr=subprocess.STDOUT).decode()
@@ -491,10 +469,12 @@ def worker_list():
 			workers_list.append(int(output))
 	return jsonify(sorted(workers_list)), 200
 
+#API to retrieve content of SYNCQ. This is called from newly spawned slaves to maintain database consistency.
 @app.route('/api/v1/syncq/content', methods=['GET'])
 def get_syncq_content():
 	global sync_messages
 	return jsonify(sync_messages), 200
 
+#Run the app
 if __name__=='__main__':
 	app.run(debug=True, host='0.0.0.0', port=80)
